@@ -57,8 +57,95 @@ const faqs=[
 ];
 const fallback='No tengo información suficiente sobre esa consulta. Puedes comunicarte directamente con Librerías Andinas 2.';
 function answer(text){const s=norm(text);const exact=faqs.find(f=>norm(f.q)===s);if(exact)return exact.a;const order=[0,1,2,3,4,5,6,7,9,8];return order.map(i=>faqs[i]).find(f=>f.keys.test(s))?.a||fallback;}
-function ask(text){const log=$('#messages');const u=document.createElement('div');u.className='bubble user';u.textContent=text;log.append(u);const a=document.createElement('div');a.className='bubble bot';const p=document.createElement('div');p.textContent=answer(text);a.append(p);const w=document.createElement('a');w.textContent='Consultar por WhatsApp';w.href=wa(generic+' Mi consulta: '+text);w.target='_blank';w.rel='noopener noreferrer';const mail=document.createElement('a');mail.textContent='Enviar correo';mail.href=`mailto:${EMAIL}?subject=${encodeURIComponent('Consulta al Asistente Andino')}&body=${encodeURIComponent(text)}`;a.append(w,mail);log.append(a);log.scrollTop=log.scrollHeight;}
-$('#faqList').innerHTML=faqs.map((f,i)=>`<button data-faq="${i}">${esc(f.q)}</button>`).join('');$('#faqList').onclick=e=>{const b=e.target.closest('[data-faq]');if(b)ask(faqs[Number(b.dataset.faq)].q);};
+const N8N_CHAT_URL =
+  'https://miltonmendozamc100.app.n8n.cloud/webhook/fb2ac5cd-d3aa-4f4e-afe7-6ccde3e12554/chat';
+
+const chatSessionId = crypto.randomUUID();
+let chatBusy = false;
+
+async function ask(text) {
+  if (chatBusy || !text.trim()) return;
+  chatBusy = true;
+
+  const controls = document.querySelectorAll(
+    '#chatForm input, #chatForm button, #faqList button'
+  );
+  controls.forEach(control => control.disabled = true);
+
+  const log = $('#messages');
+  const userBubble = document.createElement('div');
+  userBubble.className = 'bubble user';
+  userBubble.textContent = text;
+  log.append(userBubble);
+
+  const botBubble = document.createElement('div');
+  botBubble.className = 'bubble bot';
+
+  const reply = document.createElement('div');
+  reply.style.whiteSpace = 'pre-wrap';
+  reply.textContent = 'Consultando al Asistente Andino…';
+  botBubble.append(reply);
+  log.append(botBubble);
+  log.scrollTop = log.scrollHeight;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 90000);
+
+  try {
+    const response = await fetch(N8N_CHAT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'sendMessage',
+        sessionId: chatSessionId,
+        chatInput: text
+      }),
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      throw new Error('HTTP ' + response.status);
+    }
+
+    const data = await response.json();
+    const result = Array.isArray(data) ? data[0] : data;
+    const message = result?.output ?? result?.text;
+
+    if (typeof message !== 'string' || !message.trim()) {
+      throw new Error('Respuesta sin texto');
+    }
+
+    reply.textContent = message;
+  } catch (error) {
+    reply.textContent = error.name === 'AbortError'
+      ? 'La consulta está tardando demasiado. Inténtalo nuevamente.'
+      : 'No pude conectar con el asistente. Inténtalo nuevamente o consulta por WhatsApp.';
+
+    console.error('Error al consultar n8n:', error);
+  } finally {
+    clearTimeout(timer);
+
+    const whatsapp = document.createElement('a');
+    whatsapp.textContent = 'Consultar por WhatsApp';
+    whatsapp.href = wa(generic + ' Mi consulta: ' + text);
+    whatsapp.target = '_blank';
+    whatsapp.rel = 'noopener noreferrer';
+    botBubble.append(whatsapp);
+
+    chatBusy = false;
+    controls.forEach(control => control.disabled = false);
+    log.scrollTop = log.scrollHeight;
+    if (!$('#chatPanel').hidden) $('#chatInput').focus();
+  }
+}
+$('#faqList').innerHTML = faqs.map((f, i) =>
+  `<button data-faq="${i}">${esc(f.q)}</button>`
+).join('');
+
+$('#faqList').onclick = e => {
+  const b = e.target.closest('[data-faq]');
+  if (b) ask(faqs[Number(b.dataset.faq)].q);
+};
 function toggleChat(open){$('#chatPanel').hidden=!open;$('#chatToggle').setAttribute('aria-expanded',String(open));if(open)$('#chatInput').focus();else $('#chatToggle').focus();}
 $('#chatToggle').onclick=()=>toggleChat($('#chatPanel').hidden);$('#chatClose').onclick=()=>toggleChat(false);$('#chatForm').onsubmit=e=>{e.preventDefault();const text=$('#chatInput').value.trim();if(text){ask(text);$('#chatInput').value='';}};document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#chatPanel').hidden)toggleChat(false);});
 function showLegal(type){$('#legalContent').innerHTML=type==='privacy'?`<span class="eyebrow">LOS ANDES SAC</span><h2>Política de privacidad</h2><p>Los datos que compartas se utilizarán únicamente para atender consultas y solicitudes de pedidos de Librerías Andinas 2. El teléfono y el libro de interés son opcionales.</p><p>Este sitio no guarda el formulario en una base de datos ni utiliza cookies analíticas. El correo y WhatsApp se abren a petición del usuario; debes enviar el mensaje en la aplicación elegida. Una vez enviado, el mensaje se tratará en ese canal según las políticas del proveedor.</p><p>Comparte solo la información necesaria. Para solicitar acceso, corrección o eliminación de los datos que hayas enviado, escribe a <a href="mailto:${EMAIL}">${EMAIL}</a>. El equipo deberá verificar tu solicitud y gestionarla.</p><p>Antes de abrir la web al público, la empresa debe completar y revisar su política operativa de conservación de datos y canales de atención.</p>`:`<span class="eyebrow">LIBRERÍAS ANDINAS 2</span><h2>Términos y condiciones</h2><p>Este sitio presenta un catálogo demostrativo de Los Andes SAC, Perú. Los precios en soles, promociones y portadas son referenciales; no constituyen confirmación de stock ni de una edición específica.</p><p>Las novedades corresponden a incorporaciones a esta selección, sin afirmar una fecha de publicación editorial. Los descuentos de ejemplo se calculan sobre el precio referencial mostrado.</p><p>Las consultas y solicitudes por WhatsApp o correo no confirman compras. La disponibilidad, edición, idioma, precio final, duración de promociones, entrega y pago se acuerdan directamente con la empresa antes de confirmar el pedido.</p><p>No se procesan pagos en esta web. Consulta las condiciones aplicables de cambios, cancelaciones y devoluciones con el equipo antes de comprar.</p>`;$('#legalDialog').showModal();}
